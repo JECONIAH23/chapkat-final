@@ -7,9 +7,6 @@ class VoiceRecording(models.Model):
     def __str__(self):
         return f"Recording {self.id} - {self.created_at}"
 
-
-from django.db import models
-
 class Record(models.Model):
     STATUS_CHOICES = [
         ('PENDING', 'Pending'),
