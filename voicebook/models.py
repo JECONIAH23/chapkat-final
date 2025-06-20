@@ -24,6 +24,7 @@ class Record(models.Model):
         
     text = models.TextField()
     original_text = models.TextField(blank=True)  # Store original text in local language
+    original_sound = models.ForeignKey(VoiceRecording, on_delete=models.CASCADE,null=True, blank=True)  # Store original text in local language
     original_language = models.CharField(max_length=10, blank=True)
     product_name = models.CharField(max_length=255, blank=True)
     quantity = models.IntegerField(null=True, blank=True)
