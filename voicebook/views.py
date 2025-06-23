@@ -33,28 +33,79 @@ def upload_voice_recording(request):
         recording = VoiceRecording(audio_file=audio_file)
         recording.save()
         
-        # Mock transcription for testing
+        # Use Sunbird for transcription
+        try:
+            # Convert audio file to bytes
+            with open(recording.audio_file.path, 'rb') as audio_file:
+                audio_bytes = audio_file.read()
+            
+            # Get transcription using Sunbird
+            transcription = sunbird.transcribe(audio_bytes, language='lug')
+            
+            # Save transcription
+            voice_entry = Record.objects.create(
+                original_sound=recording,
+                original_text=transcription
+            )
+            
+            # Send request to Sunbird API
+            response = requests.post(
+                SUNBIRD_API_URL,
+                headers=SUNBIRD_HEADERS,
+                json=payload
+            )
+            
+            # Handle response
+            if response.status_code == 200:
+                transcription = response.json().get('transcription', '')
+            else:
+                raise Exception(f'Sunbird API error: {response.status_code} - {response.text}')
+        except Exception as e:
+            return JsonResponse({
+                'error': f'Sunbird transcription failed: {str(e)}'
+            }, status=500)
         
-        transcription = transcribe_audio(recording.audio_file.path)
-        if transcription.get("error"):
-            transcription = "Natunze amenvu ataano"
+        # Use Sunbird for financial record parsing
+        try:
+            # Prepare request payload for financial parsing
+            parsing_payload = {
+                'prompt': f"""
+                Parse the following Luganda voice transcription into structured financial records:
+                {transcription}
+                
+                Return the results in JSON format with these fields:
+                - date
+                - amount
+                - description
+                - category
+                """
+            }
+            
+            # Send request to Sunbird API for parsing
+            parsing_response = requests.post(
+                "https://salt.sunbird.ai/api/v1/complete",
+                headers=SUNBIRD_HEADERS,
+                json=parsing_payload
+            )
+            
+            # Handle parsing response
+            if parsing_response.status_code == 200:
+                records = parsing_response.json().get('completion', '')
+            else:
+                raise Exception(f'Sunbird parsing error: {parsing_response.status_code} - {parsing_response.text}')
+        except Exception as e:
+            return JsonResponse({
+                'error': f'Sunbird parsing failed: {str(e)}'
+            }, status=500)
         
-        # Save transcription
-        voice_entry = Record.objects.create(original_sound=recording, original_text=transcription)
+        # Save the structured records
+        voice_entry.processed_text = records
+        voice_entry.save()
         
-        # Call OpenRouter for financial record parsing
-        records = call_openrouter_and_parse(request.user, transcription, voice_entry)
-        
-        # Prepare structured output
         return JsonResponse({
-            "original_transcription": transcription,
-            "financial_records": [{
-                "product_name": r.product_name,
-                "quantity": r.quantity,
-                "unit_price": float(r.unit_price),
-                "total_price": float(r.total_price),
-                "transaction_type": r.transaction_type
-            } for r in records]
+            'success': True,
+            'transcription': transcription,
+            'processed_records': records
         }, status=201)
         
     except Exception as e:
