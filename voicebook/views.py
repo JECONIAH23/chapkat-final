@@ -1,115 +1,108 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.core.files.storage import FileSystemStorage
-from .models import VoiceRecording, Record
+from .models import VoiceRecording, Record, AudioRecording
+from .serializers import AudioRecordingSerializer
 import os
+import requests
 from .methods import transcribe_audio, call_openrouter_and_parse
-import json
+from rest_framework import viewsets, status
+from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
 
-@csrf_exempt
-def upload_voice_recording(request):
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
+class AudioRecordingViewSet(viewsets.ModelViewSet):
+    queryset = AudioRecording.objects.all()
+    serializer_class = AudioRecordingSerializer
+    parser_classes = [MultiPartParser, FormParser]
+
+    def create(self, request, *args, **kwargs):
+        # Get audio file and language from request
+        audio_file = request.FILES.get('audio_file')
+        language = request.data.get('language', 'lug')  # Default to Luganda if not specified
         
-    if 'audio_file' not in request.FILES:
-        return JsonResponse({'error': 'No audio file provided'}, status=400)
-        
-    audio_file = request.FILES['audio_file']
-    
-    # Validate file size (5MB max)
-    max_size = 5 * 1024 * 1024
-    if audio_file.size > max_size:
-        return JsonResponse({'error': 'File too large. Max 5MB allowed'}, status=400)
-        
-    # Validate file extension
-    valid_extensions = ['.wav', '.mp3', '.ogg', '.m4a']
-    ext = os.path.splitext(audio_file.name)[1].lower()
-    if ext not in valid_extensions:
-        return JsonResponse({
-            'error': f'Unsupported file format. Supported formats: {", ".join(valid_extensions)}'
-        }, status=400)
-        
-    try:
-        recording = VoiceRecording(audio_file=audio_file)
-        recording.save()
-        
-        # Use Sunbird for transcription
+
+
+        if not audio_file:
+            return Response({"error": "No audio file provided"}, status=status.HTTP_400_BAD_REQUEST)
+            
         try:
-            # Convert audio file to bytes
-            with open(recording.audio_file.path, 'rb') as audio_file:
-                audio_bytes = audio_file.read()
+            # Get or create a default user if none exists
+            from django.contrib.auth.models import User
+            user = User.objects.first()
+            if not user:
+                user = User.objects.create_user(
+                    username='default_user',
+                    email='default@chapkat.com',
+                    password='default_password'
+                )
             
-            # Get transcription using Sunbird
-            transcription = sunbird.transcribe(audio_bytes, language='lug')
+            # Read audio file
+            audio_bytes = audio_file.read()
             
-            # Save transcription
-            voice_entry = Record.objects.create(
-                original_sound=recording,
-                original_text=transcription
-            )
-            
-            # Send request to Sunbird API
-            response = requests.post(
-                SUNBIRD_API_URL,
-                headers=SUNBIRD_HEADERS,
-                json=payload
-            )
-            
-            # Handle response
-            if response.status_code == 200:
-                transcription = response.json().get('transcription', '')
-            else:
-                raise Exception(f'Sunbird API error: {response.status_code} - {response.text}')
-        except Exception as e:
-            return JsonResponse({
-                'error': f'Sunbird transcription failed: {str(e)}'
-            }, status=500)
-        
-        # Use Sunbird for financial record parsing
-        try:
-            # Prepare request payload for financial parsing
-            parsing_payload = {
-                'prompt': f"""
-                Parse the following Luganda voice transcription into structured financial records:
-                {transcription}
-                
-                Return the results in JSON format with these fields:
-                - date
-                - amount
-                - description
-                - category
-                """
+            # Prepare the request
+            headers = {
+                'accept': 'application/json',
+                'Authorization': os.getenv('SUNBIRD_API_KEY')
             }
             
-            # Send request to Sunbird API for parsing
-            parsing_response = requests.post(
-                "https://salt.sunbird.ai/api/v1/complete",
-                headers=SUNBIRD_HEADERS,
-                json=parsing_payload
+            # Prepare files and data
+            files = {
+                'audio': (
+                    audio_file.name,
+                    audio_bytes,
+                    'audio/mp3'
+                )
+            }
+            
+            # Prepare form data
+            data = {
+                'language': language,
+                'adapter': language,
+                'whisper': True
+            }
+            
+            # Make the API request
+            response = requests.post(
+                "https://api.sunbird.ai/tasks/stt",
+                headers=headers,
+                files=files,
+                data=data
             )
             
-            # Handle parsing response
-            if parsing_response.status_code == 200:
-                records = parsing_response.json().get('completion', '')
+            # Check for successful response
+            if response.status_code == 200:
+                transcription = response.json().get('transcription', '')
+                
+                # Save the audio recording with transcription
+                recording = AudioRecording.objects.create(
+                    user=user,
+                    audio_file=audio_file,
+                    transcription=transcription
+                )
+                
+                # Return response with transcription
+                return Response({
+                    'success': True,
+                    'transcription': transcription,
+                    'language': language
+                }, status=status.HTTP_201_CREATED)
             else:
-                raise Exception(f'Sunbird parsing error: {parsing_response.status_code} - {parsing_response.text}')
+                raise Exception(f"Sunbird API error: {response.status_code} - {response.text}")
+            
+            # Save the audio recording with transcription
+            recording = AudioRecording.objects.create(
+                audio_file=audio_file,
+                transcription=transcription
+            )
+            
+            # Return response with transcription
+            return Response({
+                'success': True,
+                'transcription': transcription,
+                'language': language
+            }, status=status.HTTP_201_CREATED)
+            
         except Exception as e:
-            return JsonResponse({
-                'error': f'Sunbird parsing failed: {str(e)}'
-            }, status=500)
-        
-        # Save the structured records
-        voice_entry.processed_text = records
-        voice_entry.save()
-        
-        return JsonResponse({
-            'success': True,
-            'transcription': transcription,
-            'processed_records': records
-        }, status=201)
-        
-    except Exception as e:
-        return JsonResponse({
-            'error': 'Server error while processing file',
-            'details': str(e)
-        }, status=500)
+            return Response({
+                'error': f'Failed to process audio: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

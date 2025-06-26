@@ -1,6 +1,11 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 from . import views
 
+router = DefaultRouter()
+router.register(r'audio', views.AudioRecordingViewSet)
+
 urlpatterns = [
-    path('upload/', views.upload_voice_recording, name='upload_voice_recording'),
+    path('transcribe/', views.transcribe_audio, name='transcribe_audio'),
+    path('api/', include(router.urls)),
 ]

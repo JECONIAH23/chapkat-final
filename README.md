@@ -49,3 +49,28 @@ python manage.py runserver
 ```
 
 4. Access the application at http://127.0.0.1:8000/
+
+## API Endpoints
+
+- POST /api/voicebook/api/audio/
+  - Upload an audio file and get a transcription
+  - Example request:
+    ```json
+    {
+        "audio_file": "<audio_file>",
+        "language": "lug"
+    }
+    ```
+  - Example response:
+    ```json
+    {
+        "success": true,
+        "transcription": "<transcription>",
+        "language": "lug"
+    }
+    ```
+
+default user
+Username: 'default_user'
+Email: 'default@chapkat.com'
+Password: 'default_password'

@@ -1,13 +1,20 @@
 from django.db import models
+from django.contrib.auth.models import User
+
+class AudioRecording(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    audio_file = models.FileField(upload_to='audio_recordings/')
+    created_at = models.DateTimeField(auto_now_add=True)
+    transcription = models.TextField(blank=True, null=True)
 
 class VoiceRecording(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     audio_file = models.FileField(upload_to='voice_recordings/')
     created_at = models.DateTimeField(auto_now_add=True)
-    
-    def __str__(self):
-        return f"Recording {self.id} - {self.created_at}"
+    transcription = models.TextField(blank=True, null=True)
 
 class Record(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     STATUS_CHOICES = [
         ('PENDING', 'Pending'),
         ('INCOMPLETE', 'Incomplete'),
